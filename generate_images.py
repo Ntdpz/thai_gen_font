@@ -5,7 +5,7 @@ import math
 
 def generate_image_with_obstacles(text_line, font_path, background_image_path, output_folder, image_index):
     """
-    สร้างรูปภาพขนาด 400x400 พิกเซล พร้อมพื้นหลัง, ข้อความที่มีการปรับแต่ง (สี, เอียง, เบลอ, สุ่มขนาด),
+    สร้างรูปภาพขนาด 400x400 พิกเซล พร้อมพื้นหลัง, ข้อความที่มีการปรับแต่ง (สี, เอียง XY สุ่มทิศทาง, เบลอ, สุ่มขนาด, เอียงแกน Z จำลอง),
     และเพิ่มอุปสรรคให้กับพื้นหลัง (เบลอ)
 
     Args:
@@ -42,17 +42,15 @@ def generate_image_with_obstacles(text_line, font_path, background_image_path, o
         text_height_unrotated = bbox_unrotated[3] - bbox_unrotated[1]
 
         # ปรับขนาดฟอนต์ถ้าข้อความกว้าง/สูงเกินรูปภาพ พร้อมให้มีระยะขอบ
-        # กำหนดขีดจำกัดสูงสุดที่ข้อความสามารถครอบครองได้ (เช่น 95% ของรูปภาพ)
-        # และเพิ่มเงื่อนไขการลดขนาดฟอนต์ที่รุนแรงขึ้นเมื่อฟอนต์ใหญ่มาก
         max_text_dimension = max(width, height) * 0.95 
         min_font_size = 5 
 
         # --- ปรับปรุงลูปการลดขนาดฟอนต์เริ่มต้น ---
-        # ลดขนาดฟอนต์ลงเร็วขึ้นหากฟอนต์เริ่มต้นใหญ่มาก เพื่อให้มีพื้นที่เผื่อการหมุน
+        # ลดขนาดฟอนต์ลงเร็วขึ้นหากฟอนต์เริ่มต้นใหญ่มาก เพื่อให้มีพื้นที่เผื่อการหมุนและการบิดเบือน
         while ((text_width_unrotated > max_text_dimension or 
                 text_height_unrotated > max_text_dimension) or 
-               font_size > 200) and font_size > min_font_size: # ลดขนาดมากขึ้นถ้าเริ่มต้นใหญ่มาก
-            font_size -= 5 # ลองลดขนาดทีละมากขึ้นเมื่อฟอนต์ใหญ่
+               font_size > 200) and font_size > min_font_size:
+            font_size -= 5 
             if font_size < min_font_size:
                 font_size = min_font_size
             font = ImageFont.truetype(font_path, font_size)
@@ -60,52 +58,136 @@ def generate_image_with_obstacles(text_line, font_path, background_image_path, o
             text_width_unrotated = bbox_unrotated[2] - bbox_unrotated[0]
             text_height_unrotated = bbox_unrotated[3] - bbox_unrotated[1]
         
-        # --- เตรียม Canvas สำหรับข้อความที่หมุนได้โดยไม่ขาด ---
+        # --- เตรียม Canvas สำหรับข้อความที่หมุนได้โดยไม่ขาด (รวมถึงการบิดเบือน) ---
         # ขนาด Canvas ที่ปลอดภัยคือขนาดทแยงมุมของรูปภาพ 400x400
-        diagonal_size = int(math.sqrt(width**2 + height**2))
+        # เผื่อพื้นที่เพิ่มขึ้นอีกเล็กน้อยสำหรับ shear transform ที่อาจทำให้ภาพขยายใหญ่ขึ้น
+        diagonal_size = int(math.sqrt(width**2 + height**2) * 1.3) # เพิ่ม 30% เพื่อรองรับ shear/perspective
         expanded_canvas_size = (diagonal_size, diagonal_size)
 
         # สร้างรูปภาพโปร่งใสสำหรับข้อความเท่านั้น ด้วยขนาดที่ใหญ่กว่าเดิม
         text_image = Image.new('RGBA', expanded_canvas_size, (0, 0, 0, 0))
         text_draw = ImageDraw.Draw(text_image)
 
-        # --- เพิ่ม Padding ใน Canvas เริ่มต้น ---
-        # คำนวณตำแหน่งข้อความบน text_image ที่ใหญ่ขึ้น (ต้องอยู่กึ่งกลางของ canvas ใหม่)
-        # และเพิ่ม padding รอบข้อความบน canvas นี้
-        canvas_padding = int(expanded_canvas_size[0] * 0.02) # เพิ่มขอบ 2% ของขนาด canvas
         x_text_on_expanded_image = (expanded_canvas_size[0] - text_width_unrotated) / 2
         y_text_on_expanded_image = (expanded_canvas_size[1] - text_height_unrotated) / 2
         
-        # วาดข้อความลงบน text_image ที่มี padding
         text_draw.text((x_text_on_expanded_image, y_text_on_expanded_image), text_line, font=font, fill=text_color)
 
-        # ใส่อุปสรรค: เอียงตัวหนังสือ
-        angle = random.uniform(-15, 15) 
-        # หมุนรูปภาพข้อความรอบจุดกึ่งกลางของ text_image เอง
-        # *** ใช้ expand=True เพื่อให้ภาพที่หมุนแล้วไม่ถูกตัดขาด ***
-        rotated_text_image = text_image.rotate(angle, center=(expanded_canvas_size[0]/2, expanded_canvas_size[1]/2), expand=True, fillcolor=(0,0,0,0))
+        # ใส่อุปสรรค: เอียงตัวหนังสือ (แกน XY)
+        angle_xy = random.uniform(-15, 15) 
+        rotated_text_image = text_image.rotate(angle_xy, center=(expanded_canvas_size[0]/2, expanded_canvas_size[1]/2), expand=True, fillcolor=(0,0,0,0))
         
+        # --- จำลองการเอียงแกน Z โดยการบิดเบือน (Shearing) อย่างถูกต้อง ---
+        apply_shear = random.random() < 0.7 # 70% ที่จะใช้ shear
+        if apply_shear:
+            # สุ่มทิศทางการเอียงทั้งแกน X และ Y (ทั้งบวกและลบ)
+            shear_factor_x = random.uniform(-0.25, 0.25) # ลดช่วงเพื่อลดการขาด
+            shear_factor_y = random.uniform(-0.25, 0.25) # ลดช่วงเพื่อลดการขาด
+
+            # Apply ShearX transform matrix
+            if abs(shear_factor_x) > 0.01: 
+                rotated_text_image = rotated_text_image.transform(
+                    rotated_text_image.size,
+                    Image.Transform.AFFINE, # แก้ไข: เปลี่ยนจาก AFFine เป็น AFFINE
+                    (1, shear_factor_x, 0, 0, 1, 0), # (a, b, c, d, e, f)
+                    resample=Image.Resampling.BICUBIC
+                )
+            
+            # Apply ShearY transform matrix
+            if abs(shear_factor_y) > 0.01:
+                 rotated_text_image = rotated_text_image.transform(
+                    rotated_text_image.size,
+                    Image.Transform.AFFINE, # แก้ไข: เปลี่ยนจาก AFFine เป็น AFFINE
+                    (1, 0, 0, shear_factor_y, 1, 0), # (a, b, c, d, e, f)
+                    resample=Image.Resampling.BICUBIC
+                )
+
+            # --- จำลองการเอียงแกน -Z โดยการปรับขนาดความสูง (Perspective Scaling แบบง่าย) ---
+            apply_z_tilt = random.random() < 0.5 # โอกาส 50% ที่จะใช้ Z tilt
+            if apply_z_tilt:
+                current_width = rotated_text_image.width
+                current_height = rotated_text_image.height
+
+                if current_height > 10 and current_width > 10: # ป้องกัน error ถ้าขนาดน้อยเกินไป
+                    # สุ่มว่าจะทำให้ด้านบน/ล่างเล็กลง หรือ ซ้าย/ขวาเล็กลง
+                    top_or_bottom_tilt = random.choice(['top_smaller', 'bottom_smaller', 'left_smaller', 'right_smaller'])
+                    z_scale_factor = random.uniform(0.75, 0.98) # ย่อขนาด 75-98%
+
+                    if top_or_bottom_tilt in ['top_smaller', 'bottom_smaller']:
+                        z_tilted_image = Image.new('RGBA', (current_width, current_height), (0, 0, 0, 0))
+                        
+                        for y in range(current_height):
+                            scale_y = 1.0
+                            if top_or_bottom_tilt == 'top_smaller':
+                                # ด้านบนเล็กลง, ด้านล่างปกติ
+                                scale_y = z_scale_factor + (1.0 - z_scale_factor) * (y / current_height)
+                            else: # bottom_smaller
+                                # ด้านล่างเล็กลง, ด้านบนปกติ
+                                scale_y = 1.0 - (1.0 - z_scale_factor) * (y / current_height)
+                            
+                            new_row_width = int(current_width * scale_y)
+                            if new_row_width > 0: # ตรวจสอบป้องกันขนาดเป็นศูนย์
+                                row_offset_x = (current_width - new_row_width) // 2
+                                
+                                # Crop แถวเดียวและ resize
+                                row_image = rotated_text_image.crop((0, y, current_width, y + 1))
+                                row_image = row_image.resize((new_row_width, 1), Image.Resampling.LANCZOS)
+                                z_tilted_image.paste(row_image, (row_offset_x, y))
+                        rotated_text_image = z_tilted_image
+
+                    elif top_or_bottom_tilt in ['left_smaller', 'right_smaller']:
+                        # วิธีที่ง่ายกว่าคือหมุนภาพ 90 องศา, ทำ row-wise tilt, แล้วหมุนกลับ
+                        temp_col_image = rotated_text_image.transpose(Image.Transpose.ROTATE_90)
+                        temp_col_image_width, temp_col_image_height = temp_col_image.size
+                        
+                        tilted_temp_col_image = Image.new('RGBA', (temp_col_image_width, temp_col_image_height), (0,0,0,0))
+
+                        for y_temp in range(temp_col_image_height): # y_temp ตรงกับ x เดิมของภาพต้นฉบับ
+                            scale_along_y_temp = 1.0
+                            if top_or_bottom_tilt == 'left_smaller': # 'left_smaller' ในภาพต้นฉบับคือ 'top_smaller' หลังหมุน 90
+                                scale_along_y_temp = z_scale_factor + (1.0 - z_scale_factor) * (y_temp / temp_col_image_height)
+                            else: # 'right_smaller' ในภาพต้นฉบับคือ 'bottom_smaller' หลังหมุน 90
+                                scale_along_y_temp = 1.0 - (1.0 - z_scale_factor) * (y_temp / temp_col_image_height)
+                            
+                            new_row_width_temp = int(temp_col_image_width * scale_along_y_temp)
+                            if new_row_width_temp > 0: # ตรวจสอบป้องกันขนาดเป็นศูนย์
+                                row_offset_x_temp = (temp_col_image_width - new_row_width_temp) // 2
+                                row_image_temp = temp_col_image.crop((0, y_temp, temp_col_image_width, y_temp + 1))
+                                row_image_temp = row_image_temp.resize((new_row_width_temp, 1), Image.Resampling.LANCZOS)
+                                tilted_temp_col_image.paste(row_image_temp, (row_offset_x_temp, y_temp))
+                        
+                        rotated_text_image = tilted_temp_col_image.transpose(Image.Transpose.ROTATE_270) # หมุนกลับไปทิศทางเดิม
+                        
+                        # หลังจากการหมุนกลับและบิดเบือน ควร re-evaluate bbox อีกครั้งเพื่อตัดส่วนเกิน
+                        rotated_text_image_bbox = rotated_text_image.getbbox()
+                        if rotated_text_image_bbox:
+                            rotated_text_image = rotated_text_image.crop(rotated_text_image_bbox)
+                        
+                        # Resample ให้กลับมาเป็นขนาดเดิม (เพื่อไม่ให้ภาพใหญ่เกินไปเมื่อนำไปวาง)
+                        # ใช้ขนาด original_width, original_height ที่ได้มาจากก่อน shear/z-tilt
+                        rotated_text_image = rotated_text_image.resize((current_width, current_height), Image.Resampling.LANCZOS)
+
+
         # ใส่อุปสรรค: เบลอตัวหนังสือ
         text_blur_radius = random.uniform(0.0, 1.5) 
         if text_blur_radius > 0:
             rotated_text_image = rotated_text_image.filter(ImageFilter.GaussianBlur(radius=text_blur_radius))
 
         # --- ปรับขนาดและวางตำแหน่งบนพื้นหลัง 400x400 ---
-        # 1. หาขอบเขตของเนื้อหาข้อความจริงๆ หลังจากหมุนและเบลอแล้ว (ไม่รวมส่วนโปร่งใส)
+        # หา bounding box ของเนื้อหาหลังจากการ transformation ทั้งหมด
         rotated_bbox_content = rotated_text_image.getbbox()
 
         if rotated_bbox_content: 
-            # 2. Crop รูปภาพ rotated_text_image ให้เหลือแต่ส่วนที่มีเนื้อหาจริงๆ
+            # Crop รูปภาพให้เหลือเฉพาะเนื้อหา
             cropped_rotated_text_image = rotated_text_image.crop(rotated_bbox_content)
 
-            # 3. คำนวณขนาดของเนื้อหาที่ถูก crop แล้ว
             final_content_width = cropped_rotated_text_image.width
             final_content_height = cropped_rotated_text_image.height
 
-            # 4. ปรับขนาดของ cropped_rotated_text_image ให้พอดีกับกรอบ 400x400 โดยไม่ให้ล้น
-            #    ใช้ scale_factor เพื่อย่อขนาดเท่านั้น (ถ้าใหญ่กว่า) โดยเผื่อขอบ 15% (เหลือ 85% สำหรับตัวอักษร)
-            final_max_fit_width = width * 0.85 
-            final_max_fit_height = height * 0.85
+            # กำหนดขนาดสูงสุดที่ข้อความสามารถครอบครองได้บนภาพพื้นหลัง
+            # ลดค่านี้ลงเพื่อให้มีขอบว่างมากขึ้น ป้องกันการขาด
+            final_max_fit_width = width * 0.75 
+            final_max_fit_height = height * 0.75
 
             scale_factor = 1.0
             if final_content_width > final_max_fit_width:
@@ -126,16 +208,14 @@ def generate_image_with_obstacles(text_line, font_path, background_image_path, o
             final_content_width = cropped_rotated_text_image.width
             final_content_height = cropped_rotated_text_image.height
 
-            # 5. คำนวณตำแหน่งที่จะวาง cropped_rotated_text_image บน background 400x400 ให้กึ่งกลาง
+            # คำนวณตำแหน่งที่จะวาง cropped_rotated_text_image บน background 400x400 ให้กึ่งกลาง
             paste_x = int((width - final_content_width) / 2)
             paste_y = int((height - final_content_height) / 2)
 
             # 6. วางข้อความลงบนพื้นหลัง
             background.paste(cropped_rotated_text_image, (paste_x, paste_y), cropped_rotated_text_image)
         else:
-            # กรณีที่ text_line ว่างเปล่าหรือ font_size เล็กจนมองไม่เห็น
             print(f"คำเตือน: ข้อความ '{text_line.strip()}' อาจเล็กเกินไปหรือมองไม่เห็น จึงไม่ได้ถูกวางลงบนรูปภาพ")
-        # --- สิ้นสุดการแก้ไขการวางตำแหน่ง ---
 
         # สร้างโฟลเดอร์เอาต์พุตหากยังไม่มี
         os.makedirs(output_folder, exist_ok=True)
@@ -166,10 +246,10 @@ def generate_image_with_obstacles(text_line, font_path, background_image_path, o
     return None, None
 
 # --- Configuration ---
-TEXT_FILE = "thai.txt"
-FONT_PATH = "Sarun's ThangLuang.ttf" # ตรวจสอบให้แน่ใจว่าไฟล์นี้อยู่ในไดเรกทอรีเดียวกัน
-BACKGROUND_IMAGE_PATH = "BG/bg_1.jpg" # ตรวจสอบให้แน่ใจว่าพาธนี้ถูกต้อง
-OUTPUT_FOLDER = "images" # โฟลเดอร์สำหรับบันทึกรูปภาพที่สร้างขึ้น
+TEXT_FILE = "thai_dict_clean.txt"
+FONT_PATH = "Sarun's ThangLuang.ttf" 
+BACKGROUND_IMAGE_PATH = "BG/bg_1.jpg" 
+OUTPUT_FOLDER = "images" 
 
 # --- Main execution ---
 if __name__ == "__main__":
@@ -193,24 +273,20 @@ if __name__ == "__main__":
                 if relative_path and text_content:
                     generated_data.append((relative_path, text_content))
 
-        # เขียน label Formatch เป็น 70/20/10
         random.shuffle(generated_data) 
 
         total_samples = len(generated_data)
         train_count = math.ceil(total_samples * 0.70) 
         val_count = math.ceil(total_samples * 0.20)
-        # คำนวณ test_count จากส่วนที่เหลือเพื่อให้แน่ใจว่าผลรวมเท่ากับ total_samples
         test_count = total_samples - train_count - val_count
         
-        # ป้องกันกรณีที่การปัดเศษทำให้ผลรวมเกิน หรือเหลือติดลบ
         if test_count < 0:
             test_count = 0
             if train_count + val_count > total_samples:
-                # ถ้า val_count เกิน ให้ลด val_count ลงก่อน
                 val_count = total_samples - train_count
-                if val_count < 0: # ถ้า train_count อย่างเดียวก็เกินแล้ว
+                if val_count < 0:
                     val_count = 0
-                    train_count = total_samples # ให้ train_count เป็นทั้งหมด
+                    train_count = total_samples 
 
         train_data = generated_data[:train_count]
         val_data = generated_data[train_count : train_count + val_count]
